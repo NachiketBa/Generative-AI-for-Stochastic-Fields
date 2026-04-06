@@ -96,7 +96,7 @@ L = MSE(x_hat, x)
 
 | Parameter | VRNN | Split-VRNN |
 |---|---|---|
-| `input_dim` | 100 | 10 |
+| `input_dim` | 10 | 10 |
 | `hidden_dim` | 40 | 40 |
 | `latent_dim` / `z1_dim + z2_dim` | 16 | 16 + 16 |
 | `seq_len` | 1001 | 1001 |
