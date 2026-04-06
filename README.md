@@ -111,17 +111,6 @@ The VRNN uses 100-feature trajectories; the Split-VRNN uses 10-feature trajector
 
 ---
 
-## Design notes
-
-**GRU over flat input.** The VAE scripts in this repo flatten each trajectory to a single vector. The VRNN models feed the sequence timestep-by-timestep into a GRU, so the encoder sees the full temporal structure before projecting to the latent space. This matters for LTI trajectories where the dynamics at one timestep depend on the previous one.
-
-**LayerNorm on GRU output.** Both models apply LayerNorm to the GRU's final hidden state before the linear projection. With only 10 or 25 training trajectories, batch statistics are too noisy to normalize reliably, so LayerNorm normalizes per sample instead.
-
-**Latent vector repeated across timesteps.** The decoder takes a single latent vector z and repeats it across all 1001 timesteps before feeding it into the decoder GRU. This forces the latent space to encode global trajectory shape rather than per-timestep variation, keeping the generation process simple — sample one z, get one full trajectory.
-
-**Regularization targets noisy samples in Split-VRNN.** In the Split-VAE scripts elsewhere in this repo, the penalty targets noiseless samples to push z1 toward zero for clean data. Here the logic is inverted: the penalty targets noisy samples (label = 0), pushing noise-related variation into z1 and leaving z2 to capture the shared clean dynamics.
-
-**Very small training sets.** The VRNN trains on 10 trajectories and the Split-VRNN on 25 per domain. Both models are intentionally lightweight (hidden_dim = 40, latent_dim = 16) to avoid overfitting at this scale.
 
 ---
 
