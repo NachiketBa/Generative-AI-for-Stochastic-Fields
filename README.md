@@ -88,7 +88,7 @@ Reparameterize z1              Reparameterize z2
 L = MSE(x_hat, x)
   + KL[q(z1) || N(0, I)]
   + KL[q(z2) || N(0, I)]
-  + lambda_reg * ||z1||^2   (applied only to noisy samples)
+  + lambda_reg * ||z1||^2   (noisy samples only; variance terms dropped for readability)
 ```
 ---
 
