@@ -1,4 +1,4 @@
-# Generative AI : Variational Recurrent Neural Networks 
+# Generative AI : Generative variational Recurrent Neural Networks 
 
 > GRU-based variational recurrent models trained to generate synthetic state trajectories from small datasets, with a split-latent variant for handling noisy and noiseless conditions simultaneously.
 
