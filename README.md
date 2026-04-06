@@ -1,4 +1,4 @@
-# Generative AI : Variational Recurrent Neural Networks (VRNN & Split-VRNN)
+# Generative AI : Variational Recurrent Neural Networks 
 
 > GRU-based variational recurrent models trained to generate synthetic state trajectories from small datasets, with a split-latent variant for handling noisy and noiseless conditions simultaneously.
 
@@ -12,14 +12,14 @@ Two models are implemented:
 
 | Script | Model | Problem |
 |---|---|---|
-| `VRNN.py` | Standard VRNN | LTI system (noisy trajectories only) |
-| `Split_VRNN.py` | Split-VRNN | LTI system (noisy + noiseless, disentangled latent) |
+| `VRNN.py` | Standard VRNN | Threat field evolution data with measurement noise|
+| `Split_VRNN.py` | Split-VRNN | Threat field evolution data with measurement noise + Estimated Threat field evolution data |
 
 ---
 
 ## Background
 
-Each trajectory is a time series of shape `[1001 timesteps, 100 state features]` from an LTI dynamical system. The VRNN encodes the full sequence into a latent vector using a GRU, then decodes it back to the original sequence length. The Split-VRNN extends this by separating the latent space into two parts: z1 captures condition-specific variation (noisy vs. noiseless) and z2 captures shared dynamics across both.
+Each trajectory is a time series of shape `[1001 timesteps, 100 state features]` from an evolving threat field. The VRNN encodes the full sequence into a latent vector using a GRU, then decodes it back to the original sequence length. The Split-VRNN extends this by separating the latent space into two parts: z1 captures condition-specific variation (noisy(with measurement noise) vs. noiseless/estimated) and z2 captures shared dynamics across both.
 
 - **VRNN training set**: 10 noisy trajectories (`set09`)
 - **Split-VRNN training set**: 25 noisy (`set05`) + 25 noiseless (`realcase_set05`)
@@ -90,9 +90,6 @@ L = MSE(x_hat, x)
   + KL[q(z2) || N(0, I)]
   + lambda_reg * ||z1||^2   (applied only to noisy samples)
 ```
-
-`lambda_reg = 1.0`. Note the regularization direction is inverted relative to the Split-VAE: here the penalty targets noisy samples (label = 0) rather than noiseless ones, pushing noise-related variation into z1.
-
 ---
 
 ## Hyperparameters
@@ -114,99 +111,6 @@ The VRNN uses 100-feature trajectories; the Split-VRNN uses 10-feature trajector
 
 ---
 
-## Installation
-
-```bash
-git clone https://github.com/NachiketBa/Generative-AI-for-RL.git
-cd "Generative-AI-for-RL"
-
-pip install torch pandas numpy
-```
-
-Tested on Python 3.9+ and PyTorch 2.0+. Both scripts detect CUDA automatically and fall back to CPU if no GPU is found.
-
----
-
-## Data Format
-
-Each dataset is a folder of CSV files, one file per trajectory.
-
-```
-case01/set09/
-    traj_0001.csv      # shape on disk: [100, 1001] -> transposed to [1001, 100]
-    traj_0002.csv
-    ...
-
-case01/set05/
-    traj_0001.csv      # shape on disk: [10, 1001] -> transposed to [1001, 10]
-    ...
-
-realcase_set05/
-    realtraj_0001.csv
-    ...
-```
-
-Each CSV stores a trajectory as a matrix with features along rows and timesteps along columns. Both scripts transpose on load so the final tensor shape is `[num_samples, 1001, num_features]`.
-
-> **Update all hardcoded folder paths** near the top of each script before running.
-
----
-
-## Running the scripts
-
-### VRNN
-
-```bash
-python VRNN.py
-```
-
-Loads the first 10 trajectories from `set09`, trains for 2000 epochs, then generates 1000 samples. Each sample is saved as a separate CSV file (shape: `[100, 1001]`, transposed back on save) in:
-
-```
-generated_100_vrnn_states_10_new/
-    generated_sample_0000.csv
-    ...
-    generated_sample_0999.csv
-```
-
-### Split-VRNN
-
-```bash
-python Split_VRNN.py
-```
-
-Loads the first 25 noisy trajectories from `set05` and the first 25 noiseless trajectories from `realcase_set05`, trains for 1000 epochs, then generates 1000 samples from random z1 and z2 draws. Each sample is saved as a separate CSV file (shape: `[10, 1001]`, transposed back on save) in:
-
-```
-generated_10_splitvrnn_states_25_1/
-    generated_sample_0000.csv
-    ...
-    generated_sample_0999.csv
-```
-
----
-
-## Console output
-
-**VRNN** prints one line per epoch:
-```
-Epoch [1/2000], Loss: 3241.8823
-Epoch [2/2000], Loss: 2987.4410
-```
-
-**Split-VRNN** prints one line per epoch:
-```
-Epoch 1: Loss = 4182.3301
-Epoch 2: Loss = 3894.7712
-```
-
-Both print a confirmation line when generation is complete:
-```
-Generated 1000 samples saved as CSV files in <save_dir>.
-```
-
----
-
 ## Design notes
 
 **GRU over flat input.** The VAE scripts in this repo flatten each trajectory to a single vector. The VRNN models feed the sequence timestep-by-timestep into a GRU, so the encoder sees the full temporal structure before projecting to the latent space. This matters for LTI trajectories where the dynamics at one timestep depend on the previous one.
@@ -221,46 +125,3 @@ Generated 1000 samples saved as CSV files in <save_dir>.
 
 ---
 
-## File structure
-
-```
-Generative-AI-for-RL/
-    Mars Lander Problem/
-        S_VAE_mars_lander.py
-        MI_VAE_mars_lander.py
-        README.md
-    LTI Problem/
-        S_VAE_LTI.py
-        Split_VAE_LTI.py
-        VRNN.py
-        Split_VRNN.py
-    Minthreat Problem/
-        S_VAE_minthreat.py
-        Split_VAE_minthreat.py
-    Zermelo Navigation Problem/
-        S_VAE_zermelo.py
-        Z_VAE_zermelo.py
-        SGAN_zermelo.py
-        ZGAN_ham.py
-        ZGAN_ham_head.py
-    README.md
-```
-
----
-
-## Citation
-
-```bibtex
-@misc{nachiket2025genairl,
-  author       = {Nachiket Ba},
-  title        = {Generative AI for Reinforcement Learning},
-  year         = {2025},
-  howpublished = {\url{https://github.com/NachiketBa/Generative-AI-for-RL}},
-}
-```
-
----
-
-## License
-
-MIT License.
