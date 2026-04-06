@@ -1,0 +1,146 @@
+#This file implements the Split-VRNN 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
+import numpy as np
+import glob
+import os
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+torch.manual_seed(42)
+
+def load_and_stack_csv(folder_path, file_pattern):
+    csv_files = sorted(glob.glob(os.path.join(folder_path, file_pattern)))
+    tensor_list = []
+
+    for file in csv_files:
+        df = pd.read_csv(file, header=None)
+        tensor = torch.tensor(df.values, dtype=torch.float32)
+        tensor = tensor.T
+        tensor_list.append(tensor)
+    final_tensor = torch.stack(tensor_list)
+    return final_tensor
+
+folder_path = 'C:/Users/nubapat/OneDrive - Worcester Polytechnic Institute (wpi.edu)/2025_VRNN/case01/set05'
+folder_path1 = 'C:/Users/nubapat/OneDrive - Worcester Polytechnic Institute (wpi.edu)/2025_VRNN/realcase_set05' # Change as per set number
+
+# Load and stack CSV files
+final_tensor_noise = load_and_stack_csv(folder_path, 'traj_*.csv')
+final_tensor_noiseless = load_and_stack_csv(folder_path1, 'realtraj_*.csv')
+
+final_tensor_noise = final_tensor_noise[:25,:,:]
+final_tensor_noiseless = final_tensor_noiseless[:25,:,:]
+
+# Label: 0 for noisy, 1 for noiseless
+labels_noise = torch.zeros(final_tensor_noise.shape[0])       
+labels_noiseless = torch.ones(final_tensor_noiseless.shape[0])  
+
+# Concatenate data and labels
+combined_data = torch.cat([final_tensor_noise, final_tensor_noiseless], dim=0)       
+combined_labels = torch.cat([labels_noise, labels_noiseless], dim=0)                  
+
+# Create dataset and dataloader
+dataset = TensorDataset(combined_data, combined_labels)
+trainloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+
+
+
+class SplitVRNN(nn.Module):
+    def __init__(self, input_dim, hidden_dim, z1_dim, z2_dim):
+        super(SplitVRNN, self).__init__()
+        self.encoder_rnn = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.ln_enc = nn.LayerNorm(hidden_dim)
+
+        self.fc_enc = nn.Linear(hidden_dim, hidden_dim)
+        self.z1_mu = nn.Linear(hidden_dim, z1_dim)
+        self.z1_logvar = nn.Linear(hidden_dim, z1_dim)
+        self.z2_mu = nn.Linear(hidden_dim, z2_dim)
+        self.z2_logvar = nn.Linear(hidden_dim, z2_dim)
+
+        self.decoder_rnn = nn.GRU(z1_dim + z2_dim, hidden_dim, batch_first=True)
+        self.ln_dec = nn.LayerNorm(hidden_dim)
+        self.fc_dec = nn.Linear(hidden_dim, input_dim)
+
+    def encode(self, x):
+        _, h = self.encoder_rnn(x)
+        h = h[-1]
+        h = self.ln_enc(h)
+        h = F.relu(self.fc_enc(h))
+        return self.z1_mu(h), self.z1_logvar(h), self.z2_mu(h), self.z2_logvar(h)
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z1, z2, seq_len):
+        z = torch.cat([z1, z2], dim=-1)
+        z = z.unsqueeze(1).repeat(1, seq_len, 1)
+        decoded, _ = self.decoder_rnn(z)
+        decoded = self.ln_dec(decoded)
+        return self.fc_dec(decoded)
+
+    def forward(self, x):
+        seq_len = x.size(1)
+        z1_mu, z1_logvar, z2_mu, z2_logvar = self.encode(x)
+        z1 = self.reparameterize(z1_mu, z1_logvar)
+        z2 = self.reparameterize(z2_mu, z2_logvar)
+        x_recon = self.decode(z1, z2, seq_len)
+        return x_recon, z1_mu, z1_logvar, z2_mu, z2_logvar
+def split_vrnn_loss(x_recon, x, z1_mu, z1_logvar, z2_mu, z2_logvar, is_noiseless, lambda_reg):
+    recon_loss = F.mse_loss(x_recon, x, reduction='sum')
+    kl_z1 = -0.5 * torch.sum(1 + z1_logvar - z1_mu.pow(2) - z1_logvar.exp())
+    kl_z2 = -0.5 * torch.sum(1 + z2_logvar - z2_mu.pow(2) - z2_logvar.exp())
+
+    # Only penalize z1 for noiseless samples
+    reg_term = lambda_reg * torch.sum((z1_mu.pow(2) + z1_logvar.exp() - 1 - z1_logvar) * (~is_noiseless.bool()).unsqueeze(1))
+    return recon_loss + kl_z1 + kl_z2 + reg_term
+
+model = SplitVRNN(input_dim=10, hidden_dim=40, z1_dim=16, z2_dim=16).to(device)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+num_epochs = 1000
+#
+for epoch in range(num_epochs):
+    total_loss = 0
+    for x, label in trainloader:
+        x = x.to(device)
+        label = label.to(device)
+
+        optimizer.zero_grad()
+        x_recon, z1_mu, z1_logvar, z2_mu, z2_logvar = model(x)
+        loss = split_vrnn_loss(x_recon, x, z1_mu, z1_logvar, z2_mu, z2_logvar, label, lambda_reg=1.0)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    print(f"Epoch {epoch + 1}: Loss = {total_loss / len(trainloader.dataset):.4f}")
+
+# Settings
+num_samples = 1000
+seq_len = 1001
+z1_dim = 16
+z2_dim = 16
+
+save_dir = 'C:/Users/nubapat/OneDrive-Worcester Polytechnic Institute (wpi.edu)/2025_VRNN/generated_10_splitvrnn_states_25_1'
+os.makedirs(save_dir, exist_ok=True)
+
+# Sample random latent vectors from a standard normal distribution
+z1 = torch.randn(num_samples, z1_dim).to(device)
+z2 = torch.randn(num_samples, z2_dim).to(device)
+
+# Generate samples using the split-VRNN decoder
+with torch.no_grad():
+    generated_samples = model.decode(z1, z2, seq_len).cpu().numpy()  
+
+# Save each generated sample as a CSV file
+for i, sample in enumerate(generated_samples):
+    save_path = os.path.join(save_dir, f"generated_sample_{i:04d}.csv")  
+    np.savetxt(save_path, sample.T, delimiter=",") 
+
+print(f"Generated {len(generated_samples)} samples saved as CSV files in {save_dir}.")
