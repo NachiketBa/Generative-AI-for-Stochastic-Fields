@@ -24,7 +24,7 @@ Each trajectory is a time series of shape `[1001 timesteps, 100 state features]`
 - **VRNN training set**: 10 noisy trajectories (`set09`)
 - **Split-VRNN training set**: 25 noisy (`set05`) + 25 noiseless (`realcase_set05`)
 
-Both models generate 1000 new trajectories after training, saved as individual CSV files.
+Both models generate 1000 new trajectories after training.
 
 ---
 
