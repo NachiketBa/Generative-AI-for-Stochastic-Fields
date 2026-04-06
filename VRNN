@@ -1,0 +1,142 @@
+#This file implements the VRNN 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+import os
+import numpy as np
+import pandas as pd
+import glob
+
+class VRNN(nn.Module):
+    def __init__(self, input_dim, hidden_dim, latent_dim):
+        super(VRNN, self).__init__()
+
+        
+        self.encoder_rnn = nn.GRU(input_dim, hidden_dim, batch_first=True, num_layers=1)  
+        self.layer_norm_enc = nn.LayerNorm(hidden_dim)
+
+        # Extra FC layer in encoder
+        self.fc_hidden = nn.Linear(hidden_dim, hidden_dim)  # Additional dense layer
+        self.fc_mu = nn.Linear(hidden_dim, latent_dim)
+        self.fc_logvar = nn.Linear(hidden_dim, latent_dim)
+
+        
+        self.decoder_rnn = nn.GRU(latent_dim, hidden_dim, batch_first=True, num_layers=1)  
+        self.layer_norm_dec = nn.LayerNorm(hidden_dim)
+
+        
+        self.fc_hidden_dec = nn.Linear(hidden_dim, hidden_dim)
+        self.fc_output = nn.Linear(hidden_dim, input_dim)
+
+    def encode(self, x):
+        _, h = self.encoder_rnn(x)
+        h_last = h[-1]
+        h_last = self.layer_norm_enc(h_last)
+        h_last = F.relu(self.fc_hidden(h_last))  
+        mu = self.fc_mu(h_last)
+        logvar = self.fc_logvar(h_last)
+        return mu, logvar
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z, seq_len):
+        z = z.unsqueeze(1).repeat(1, seq_len, 1)
+        decoded, _ = self.decoder_rnn(z)
+        decoded = self.layer_norm_dec(decoded)
+        decoded = F.relu(self.fc_hidden_dec(decoded)) 
+        output = self.fc_output(decoded)
+        return output
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        x_recon = self.decode(z, x.size(1))
+        return x_recon, mu, logvar
+
+# Loss function for VRNN
+def vrnn_loss(recon_x, x, mu, logvar):
+    recon_loss = F.mse_loss(recon_x, x, reduction='sum')  # Reconstruction loss
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())  # KL Divergence
+    return recon_loss + kld
+
+
+# Hyperparameters
+input_dim = 100  # Number of features in input
+hidden_dim = 40  # Hidden dimension in RNN
+latent_dim = 16  # Dimension of the latent space
+batch_size = 32
+num_epochs = 2000
+learning_rate = 0.001
+seq_len = 1001  # Length of the input sequences
+
+# Load the tensor data
+
+
+# Path to the folder containing CSV files
+folder_path = 'C:/Users/nubapat/OneDrive - Worcester Polytechnic Institute (wpi.edu)/2025_VRNN/case01/set09'
+
+# Get list of all CSV files
+csv_files = sorted(glob.glob(os.path.join(folder_path, 'traj_*.csv')))
+
+# Read and stack CSV files
+tensor_list = []
+
+for file in csv_files:
+    df = pd.read_csv(file, header=None)  # Assuming no headers in CSV
+    tensor = torch.tensor(df.values, dtype=torch.float32)  # Convert to tensor
+    tensor = tensor.T  # Transpose to match (n, 4)
+    tensor_list.append(tensor)
+
+# Stack tensors to get final shape (1000, n, 4)
+final_tensor = torch.stack(tensor_list)
+final_tensor = final_tensor[:10,:,:]
+print(f"Final tensor shape: {final_tensor.shape}")
+
+train_data = torch.utils.data.TensorDataset(final_tensor)
+train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
+#
+# Instantiate the model and move it to the device
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f"Using device: {device}")
+model = VRNN(input_dim, hidden_dim, latent_dim).to(device)  # Move model to device
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+#
+# Training loop
+model.train()
+torch.manual_seed(42)
+for epoch in range(num_epochs):
+    total_loss = 0
+    for batch in train_loader:
+        x = batch[0].to(device)  # Move input tensor to device
+        optimizer.zero_grad()
+        recon_x, mu, logvar = model(x)  # Forward pass
+        loss = vrnn_loss(recon_x, x, mu, logvar)  # Compute loss
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+
+    print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {total_loss / len(train_loader.dataset):.4f}")
+
+# Generation 
+num_samples = 1000
+save_dir = 'C:/Users/nubapat/OneDrive-Worcester Polytechnic Institute (wpi.edu)/2025_VRNN/generated_100_vrnn_states_10_new'
+os.makedirs(save_dir, exist_ok=True)
+
+# Sample random latent vectors from a standard normal distribution
+z = torch.randn(num_samples, latent_dim).to(device)  
+
+# Generate samples using the decoder
+with torch.no_grad():
+    generated_samples = model.decode(z, seq_len).cpu().numpy()  # Shape: (num_samples, 1001, 4)
+
+# Save each generated sample as a CSV file
+for i, sample in enumerate(generated_samples):
+    save_path = os.path.join(save_dir, f"generated_sample_{i:04d}.csv")  
+    np.savetxt(save_path, sample.T, delimiter=",")  
+
+print(f"Generated {len(generated_samples)} samples saved as CSV files in {save_dir}.")
+
